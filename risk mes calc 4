@@ -1,0 +1,133 @@
+library(quantmod)
+
+lo.fn <- function(x, weights, value, linear = FALSE) {
+  N <- length(weights)
+  TT <- if (is.matrix(x)) dim(x)[1] else 1
+  weight.mat <- matrix(weights, TT, N, byrow = TRUE)
+  tmp.mat <- value * weight.mat
+
+  if (linear) {
+    summand <- x * tmp.mat
+  } else {
+    summand <- (exp(x) - 1) * tmp.mat
+  }
+
+  -rowSums(summand)
+}
+
+tickers <- c("NVDA", "TSLA", "AMZN", "XOM", "KO")
+
+getSymbols(
+  tickers,
+  src = "yahoo",
+  from = "2024-01-01",
+  to = "2024-12-31"
+)
+
+prices <- merge(
+  Ad(NVDA),
+  Ad(TSLA),
+  Ad(AMZN),
+  Ad(XOM),
+  Ad(KO)
+)
+
+colnames(prices) <- tickers
+prices <- na.omit(prices)
+
+logprices <- log(prices)
+X <- coredata(diff(logprices)[-1, ])
+
+capital <- 1e5
+pf.weights <- rep(1 / 5, 5)
+alpha <- 0.99
+
+mu.hat <- colMeans(X)
+Sigma.hat <- var(X)
+
+meanloss <- -sum(pf.weights * mu.hat) * capital
+
+varloss <- capital^2 *
+  as.numeric(
+    t(pf.weights) %*%
+      Sigma.hat %*%
+      pf.weights
+  )
+
+VaR.normal <- meanloss +
+  sqrt(varloss) * qnorm(alpha)
+
+ES.normal <- meanloss +
+  sqrt(varloss) *
+  dnorm(qnorm(alpha)) /
+  (1 - alpha)
+
+hs <- lo.fn(
+  X,
+  pf.weights,
+  capital
+)
+
+VaR.hs <- as.numeric(
+  quantile(hs, alpha)
+)
+
+ES.hs <- mean(
+  hs[hs > VaR.hs]
+)
+
+round(
+  rbind(
+    normal = c(
+      VaR = VaR.normal,
+      ES = ES.normal
+    ),
+    hist = c(
+      VaR = VaR.hs,
+      ES = ES.hs
+    )
+  ),
+  1
+)
+
+vol <- apply(
+  X,
+  2,
+  sd
+)
+
+drop <- which.max(vol)
+
+tickers[drop]
+
+X2 <- X[, -drop]
+
+w2 <- rep(1 / 4, 4)
+
+hs2 <- lo.fn(
+  X2,
+  w2,
+  capital
+)
+
+VaR.hs2 <- as.numeric(
+  quantile(hs2, alpha)
+)
+
+ES.hs2 <- mean(
+  hs2[hs2 > VaR.hs2]
+)
+
+round(
+  rbind(
+    `5 stocks` = c(
+      VaR = VaR.hs,
+      ES = ES.hs
+    ),
+    `4 stocks` = c(
+      VaR = VaR.hs2,
+      ES = ES.hs2
+    )
+  ),
+  1
+)
