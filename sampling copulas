@@ -1,0 +1,121 @@
+library(QRM)
+
+set.seed(123)
+
+n <- 2000
+tau <- 0.5
+
+rho <- sin(pi * tau / 2)
+theta <- 2 * tau / (1 - tau)
+
+rho
+theta
+
+Sigma <- matrix(
+  c(1, rho,
+    rho, 1),
+  nrow = 2
+)
+
+gauss_copula <- rcopula.gauss(
+  n,
+  Sigma = Sigma
+)
+
+gauss_sample <- apply(
+  gauss_copula,
+  2,
+  qnorm
+)
+
+clayton_copula <- rcopula.clayton(
+  n,
+  theta = theta,
+  d = 2
+)
+
+clayton_sample <- apply(
+  clayton_copula,
+  2,
+  qnorm
+)
+
+tau_gauss <- cor(
+  gauss_sample[, 1],
+  gauss_sample[, 2],
+  method = "kendall"
+)
+
+tau_clayton <- cor(
+  clayton_sample[, 1],
+  clayton_sample[, 2],
+  method = "kendall"
+)
+
+tau_gauss
+tau_clayton
+
+par(mfrow = c(1, 2))
+
+plot(
+  gauss_sample[, 1],
+  gauss_sample[, 2],
+  main = "Gaussian copula",
+  xlab = "X1",
+  ylab = "X2",
+  pch = 16,
+  cex = 0.45,
+  xlim = c(-4, 4),
+  ylim = c(-4, 4)
+)
+
+abline(
+  v = qnorm(0.05),
+  h = qnorm(0.05),
+  lty = 2
+)
+
+plot(
+  clayton_sample[, 1],
+  clayton_sample[, 2],
+  main = "Clayton copula",
+  xlab = "X1",
+  ylab = "X2",
+  pch = 16,
+  cex = 0.45,
+  xlim = c(-4, 4),
+  ylim = c(-4, 4)
+)
+
+abline(
+  v = qnorm(0.05),
+  h = qnorm(0.05),
+  lty = 2
+)
+
+par(mfrow = c(1, 1))
+
+q05 <- qnorm(0.05)
+
+p_gauss <- mean(
+  gauss_sample[, 1] < q05 &
+  gauss_sample[, 2] < q05
+)
+
+p_clayton <- mean(
+  clayton_sample[, 1] < q05 &
+  clayton_sample[, 2] < q05
+)
+
+p_gauss
+p_clayton
+
+sum(
+  gauss_sample[, 1] < q05 &
+  gauss_sample[, 2] < q05
+)
+
+sum(
+  clayton_sample[, 1] < q05 &
+  clayton_sample[, 2] < q05
+)
