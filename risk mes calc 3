@@ -1,0 +1,42 @@
+alpha <- c(0.99, 0.999)
+
+mu <- 0
+sigma <- 100
+nu <- 4
+
+q_t <- qt(alpha, df = nu)
+
+VaR_true <- mu + sigma * q_t
+
+ES_true <- mu + sigma *
+  dt(q_t, df = nu) / (1 - alpha) *
+  (nu + q_t^2) / (nu - 1)
+
+normal_sd <- sigma * sqrt(nu / (nu - 2))
+
+q_normal <- qnorm(alpha)
+
+VaR_normal <- mu + normal_sd * q_normal
+
+ES_normal <- mu + normal_sd *
+  dnorm(q_normal) / (1 - alpha)
+
+VaR_understatement <-
+  (VaR_true - VaR_normal) / VaR_true * 100
+
+ES_understatement <-
+  (ES_true - ES_normal) / ES_true * 100
+
+results <- data.frame(
+  Confidence_Level = paste0(alpha * 100, "%"),
+  True_VaR = VaR_true,
+  Normal_VaR = VaR_normal,
+  VaR_Understatement_Percent = VaR_understatement,
+  True_ES = ES_true,
+  Normal_ES = ES_normal,
+  ES_Understatement_Percent = ES_understatement
+)
+
+results[, 2:7] <- round(results[, 2:7], 2)
+
+print(results)
