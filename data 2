@@ -1,0 +1,119 @@
+library(quantmod)
+library(moments)
+library(zoo)
+
+uso <- getSymbols(
+  "USO",
+  src = "yahoo",
+  from = "2026-01-01",
+  to = Sys.Date(),
+  auto.assign = FALSE
+)
+
+prices <- Ad(uso)
+
+returns <- diff(log(prices))
+returns <- na.omit(returns)
+
+par(mfrow = c(2, 1))
+
+plot(
+  prices,
+  main = "USO adjusted price",
+  ylab = "Price",
+  xlab = "Date"
+)
+
+plot(
+  returns,
+  main = "USO daily log-returns",
+  ylab = "Return",
+  xlab = "Date"
+)
+
+par(mfrow = c(1, 1))
+
+R <- as.numeric(returns)
+
+largest_moves <- order(
+  abs(R),
+  decreasing = TRUE
+)[1:10]
+
+largest_moves_table <- data.frame(
+  date = index(returns)[largest_moves],
+  return = R[largest_moves]
+)
+
+largest_moves_table
+
+plot(
+  index(returns),
+  R,
+  type = "l",
+  main = "USO returns with largest moves",
+  ylab = "Return",
+  xlab = "Date"
+)
+
+points(
+  index(returns)[largest_moves],
+  R[largest_moves],
+  col = "red",
+  pch = 19,
+  cex = 1.5
+)
+
+mean_return <- mean(R)
+
+sd_return <- sd(R)
+
+annualised_volatility <- sd_return * sqrt(252)
+
+mean_return
+sd_return
+annualised_volatility
+
+hist(
+  R,
+  probability = TRUE,
+  main = "Histogram of USO returns",
+  xlab = "Return"
+)
+
+curve(
+  dnorm(
+    x,
+    mean = mean(R),
+    sd = sd(R)
+  ),
+  add = TRUE,
+  col = "red"
+)
+
+skewness(R)
+
+kurtosis(R)
+
+rolling_volatility <- rollapply(
+  returns,
+  width = 21,
+  FUN = sd,
+  fill = NA,
+  align = "right"
+)
+
+plot(
+  rolling_volatility,
+  main = "21-day rolling volatility",
+  ylab = "Volatility",
+  xlab = "Date"
+)
+
+sum(is.na(prices))
+
+anyDuplicated(index(prices))
+
+summary(prices)
+
+summary(returns) 
