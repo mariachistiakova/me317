@@ -1,0 +1,65 @@
+library(tidyquant)
+library(dplyr)
+
+aapl <- tq_get(
+  "AAPL",
+  get = "stock.prices",
+  from = "2025-01-01",
+  to = "2025-12-31"
+)
+
+head(aapl)
+tail(aapl)
+str(aapl)
+summary(aapl)
+
+aapl <- aapl %>%
+  arrange(date) %>%
+  mutate(
+    return = log(adjusted / lag(adjusted)),
+    clipped_return = sign(return)
+  ) %>%
+  filter(!is.na(return))
+
+plot(
+  aapl$date,
+  aapl$adjusted,
+  type = "l",
+  main = "Apple adjusted price",
+  xlab = "Date",
+  ylab = "Adjusted price"
+)
+
+plot(
+  aapl$date,
+  aapl$return,
+  type = "l",
+  main = "Apple daily log-returns",
+  xlab = "Date",
+  ylab = "Log-return"
+)
+
+return_autocov <- cov(
+  aapl$return,
+  lag(aapl$return),
+  use = "complete.obs"
+)
+
+clipped_autocov <- cov(
+  aapl$clipped_return,
+  lag(aapl$clipped_return),
+  use = "complete.obs"
+)
+
+results <- data.frame(
+  series = c(
+    "Log returns",
+    "Clipped returns"
+  ),
+  lag1_autocovariance = c(
+    return_autocov,
+    clipped_autocov
+  )
+)
+
+results
