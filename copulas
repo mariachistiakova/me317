@@ -1,0 +1,44 @@
+library(quantmod)
+library(QRM)
+
+getSymbols(c("SPY", "QQQ"), src = "yahoo", from = "2010-01-01")
+
+R <- na.omit(merge(diff(log(Ad(SPY))), diff(log(Ad(QQQ)))))
+colnames(R) <- c("SPY", "QQQ")
+
+U <- apply(coredata(R), 2, edf, adjust = 1)
+
+plot(U[,1], U[,2], pch = 16, cex = 0.4,
+     col = rgb(0, 0, 0, 0.15), xlab = "SPY", ylab = "QQQ")
+
+cat("Kendall tau:", round(cor(U, method = "kendall")[1,2], 3), "\n")
+
+fits <- list(
+  Gauss = fit.gausscopula(U),
+  StudT = fit.tcopula(U),
+  Gumbel = fit.AC(U, "gumbel"),
+  Clayton = fit.AC(U, "clayton")
+)
+
+ll <- sapply(fits, `[[`, "ll.max")
+k <- c(1, 2, 1, 1)
+n <- nrow(U)
+
+result <- data.frame(
+  logLik = ll,
+  AIC = -2 * ll + 2 * k,
+  BIC = -2 * ll + k * log(n)
+)
+
+print(round(result, 2))
+
+best <- rownames(result)[which.min(result$BIC)]
+
+tail <- switch(best,
+  Gauss = "no tail dependence",
+  StudT = paste("symmetric tail dependence, nu =", round(fits$StudT$nu, 2)),
+  Gumbel = "upper-tail dependence",
+  Clayton = "lower-tail dependence"
+)
+
+cat("Best copula:", best, "-", tail)
