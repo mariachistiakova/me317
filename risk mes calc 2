@@ -1,0 +1,21 @@
+ES_compound_normal <- function(alpha) {
+  if (alpha <= 0 || alpha >= 1) {
+    stop("alpha must be between 0 and 1")
+  }
+
+  set.seed(123)
+
+  n <- 1000000
+
+  mu <- runif(n, 0, 1)
+  sigma <- 5 * rbeta(n, 1, 1)
+
+  losses <- rnorm(n, mean = mu, sd = sigma)
+
+  VaR <- quantile(losses, alpha)
+  es <- mean(losses[losses > VaR])
+
+  return(es)
+}
+
+ES_compound_normal(0.99)
