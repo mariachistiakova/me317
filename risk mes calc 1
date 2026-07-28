@@ -1,0 +1,12 @@
+ES_standard_normal <- function(alpha) {
+  if (alpha <= 0 || alpha >= 1) {
+    stop("alpha must be between 0 and 1")
+  }
+
+  z <- qnorm(alpha)
+  es <- dnorm(z) / (1 - alpha)
+
+  return(es)
+}
+
+ES_standard_normal(0.99)
