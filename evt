@@ -1,0 +1,40 @@
+library(quantmod)
+library(QRM)
+
+IXIC <- getSymbols(
+  "^IXIC",
+  src = "yahoo",
+  from = "2005-01-01",
+  to = "2026-06-30",
+  auto.assign = FALSE
+)
+
+prices <- Ad(IXIC)
+
+X <- -diff(log(prices))
+X <- na.omit(X)
+
+X.weekMax <- apply.weekly(X, max)
+
+plot(
+  X.weekMax,
+  main = "NASDAQ Weekly Maximum Losses",
+  ylab = "Maximum negative log-return"
+)
+
+GEVweek <- fit.GEV(as.numeric(X.weekMax))
+
+GEVweek[1:2]
+
+xi_hat <- GEVweek$par.ests[1]
+mu_hat <- GEVweek$par.ests[2]
+sigma_hat <- GEVweek$par.ests[3]
+
+probability <- 1 - pGEV(
+  q = 0.03,
+  xi = xi_hat,
+  mu = mu_hat,
+  sigma = sigma_hat
+)
+
+as.numeric(probability)
