@@ -1,0 +1,626 @@
+packages <- c("quantmod", "xts")
+
+newpackages <- packages[
+  !packages %in% rownames(installed.packages())
+]
+
+if (length(newpackages) > 0) {
+  install.packages(newpackages)
+}
+
+library(quantmod)
+library(xts)
+
+tickers <- c(
+  "AAPL", "MSFT", "NVDA", "AMZN", "WMT",
+  "KO", "JNJ", "XOM", "CAT", "DIS"
+)
+
+enddate <- Sys.Date()
+startdate <- enddate - 3652
+
+pricelist <- lapply(tickers, function(ticker) {
+  stockdata <- getSymbols(
+    ticker,
+    src = "yahoo",
+    from = startdate,
+    to = enddate + 1,
+    auto.assign = FALSE
+  )
+
+  price <- Ad(stockdata)
+  colnames(price) <- ticker
+
+  return(price)
+})
+
+prices <- do.call(merge, pricelist)
+prices <- na.omit(prices)
+
+cat("\nFirst price observations:\n")
+print(head(prices))
+
+cat("\nLast price observations:\n")
+print(tail(prices))
+
+cat(
+  "\nNumber of price observations:",
+  nrow(prices),
+  "\n"
+)
+
+dailyreturns <- diff(log(prices))
+dailyreturns <- na.omit(dailyreturns)
+
+cat("\nFirst daily log-return observations:\n")
+print(head(dailyreturns))
+
+cat(
+  "\nNumber of daily return observations:",
+  nrow(dailyreturns),
+  "\n"
+)
+
+jbtest <- function(x) {
+  x <- as.numeric(x)
+  x <- x[!is.na(x)]
+
+  n <- length(x)
+  centredx <- x - mean(x)
+
+  secondmoment <- mean(centredx^2)
+  thirdmoment <- mean(centredx^3)
+  fourthmoment <- mean(centredx^4)
+
+  skewness <- thirdmoment / secondmoment^(3 / 2)
+  kurtosis <- fourthmoment / secondmoment^2
+  excesskurtosis <- kurtosis - 3
+
+  skewcontribution <- n * skewness^2 / 6
+  tailcontribution <- n * excesskurtosis^2 / 24
+
+  jbstatistic <- skewcontribution + tailcontribution
+
+  pvalue <- pchisq(
+    jbstatistic,
+    df = 2,
+    lower.tail = FALSE
+  )
+
+  result <- data.frame(
+    N = n,
+    JB = jbstatistic,
+    pvalue = pvalue,
+    Skewness = skewness,
+    Kurtosis = kurtosis,
+    Excesskurtosis = excesskurtosis,
+    Skewcontribution = skewcontribution,
+    Tailcontribution = tailcontribution
+  )
+
+  return(result)
+}
+
+jballstocks <- function(returndata) {
+  resultlist <- lapply(
+    seq_len(ncol(returndata)),
+    function(j) {
+      result <- jbtest(returndata[, j])
+      result$Stock <- colnames(returndata)[j]
+
+      result <- result[
+        ,
+        c(
+          "Stock",
+          "N",
+          "JB",
+          "pvalue",
+          "Skewness",
+          "Kurtosis",
+          "Excesskurtosis",
+          "Skewcontribution",
+          "Tailcontribution"
+        )
+      ]
+
+      return(result)
+    }
+  )
+
+  resulttable <- do.call(rbind, resultlist)
+  rownames(resulttable) <- NULL
+
+  resulttable$Decision <- ifelse(
+    resulttable$pvalue < 0.05,
+    "Reject normality",
+    "Do not reject normality"
+  )
+
+  return(resulttable)
+}
+
+mardiatest <- function(returndata) {
+  x <- as.matrix(na.omit(returndata))
+
+  n <- nrow(x)
+  p <- ncol(x)
+
+  means <- colMeans(x)
+
+  centredx <- sweep(
+    x,
+    2,
+    means,
+    "-"
+  )
+
+  covariancematrix <- crossprod(centredx) / n
+
+  inversecovariance <- tryCatch(
+    solve(covariancematrix),
+    error = function(e) {
+      qr.solve(covariancematrix)
+    }
+  )
+
+  innerproducts <- centredx %*%
+    inversecovariance %*%
+    t(centredx)
+
+  mardiaskewness <- sum(innerproducts^3) / n^2
+
+  skewnessstatistic <- n * mardiaskewness / 6
+
+  skewnessdf <- p * (p + 1) * (p + 2) / 6
+
+  skewnesspvalue <- pchisq(
+    skewnessstatistic,
+    df = skewnessdf,
+    lower.tail = FALSE
+  )
+
+  squareddistances <- rowSums(
+    (centredx %*% inversecovariance) * centredx
+  )
+
+  mardiakurtosis <- mean(squareddistances^2)
+
+  expectedkurtosis <- p * (p + 2)
+
+  kurtosisz <- (
+    mardiakurtosis - expectedkurtosis
+  ) / sqrt(
+    8 * p * (p + 2) / n
+  )
+
+  kurtosispvalue <- 2 * pnorm(
+    -abs(kurtosisz)
+  )
+
+  result <- data.frame(
+    N = n,
+    Variables = p,
+    Mardiaskewness = mardiaskewness,
+    Skewnessstatistic = skewnessstatistic,
+    Skewnessdf = skewnessdf,
+    Skewnesspvalue = skewnesspvalue,
+    Mardiakurtosis = mardiakurtosis,
+    Expectedkurtosis = expectedkurtosis,
+    Kurtosisz = kurtosisz,
+    Kurtosispvalue = kurtosispvalue
+  )
+
+  return(result)
+}
+
+dailymardia <- mardiatest(dailyreturns)
+
+cat("\n")
+cat("============================================\n")
+cat("DAILY MARDIA TEST\n")
+cat("============================================\n")
+
+print(
+  dailymardia,
+  digits = 6
+)
+
+if (
+  dailymardia$Skewnesspvalue < 0.05 ||
+  dailymardia$Kurtosispvalue < 0.05
+) {
+  cat(
+    "\nConclusion:",
+    "Reject multivariate normality of daily returns.\n"
+  )
+} else {
+  cat(
+    "\nConclusion:",
+    "Do not reject multivariate normality of daily returns.\n"
+  )
+}
+
+dailyjb <- jballstocks(dailyreturns)
+
+dailyjb <- dailyjb[
+  order(
+    dailyjb$JB,
+    decreasing = TRUE
+  ),
+]
+
+rownames(dailyjb) <- NULL
+
+cat("\n")
+cat("============================================\n")
+cat("DAILY JARQUE-BERA TESTS\n")
+cat("============================================\n")
+
+print(
+  dailyjb,
+  digits = 6
+)
+
+strongestrow <- dailyjb[
+  which.max(dailyjb$JB),
+]
+
+strongeststock <- strongestrow$Stock
+
+cat("\n")
+cat("============================================\n")
+cat("STRONGEST JARQUE-BERA REJECTION\n")
+cat("============================================\n")
+
+cat(
+  "Stock:",
+  strongeststock,
+  "\n"
+)
+
+cat(
+  "JB statistic:",
+  strongestrow$JB,
+  "\n"
+)
+
+cat(
+  "p-value:",
+  strongestrow$pvalue,
+  "\n"
+)
+
+cat(
+  "Skewness:",
+  strongestrow$Skewness,
+  "\n"
+)
+
+cat(
+  "Kurtosis:",
+  strongestrow$Kurtosis,
+  "\n"
+)
+
+cat(
+  "Excess kurtosis:",
+  strongestrow$Excesskurtosis,
+  "\n"
+)
+
+cat(
+  "Skewness contribution:",
+  strongestrow$Skewcontribution,
+  "\n"
+)
+
+cat(
+  "Fat-tail contribution:",
+  strongestrow$Tailcontribution,
+  "\n"
+)
+
+if (
+  strongestrow$Tailcontribution >
+  strongestrow$Skewcontribution
+) {
+  driver <- "fat tails / excess kurtosis"
+} else {
+  driver <- "skewness"
+}
+
+cat(
+  "\nThe rejection is driven mainly by:",
+  driver,
+  "\n"
+)
+
+strongestreturns <- as.numeric(
+  dailyreturns[, strongeststock]
+)
+
+qqnorm(
+  strongestreturns,
+  pch = 19,
+  cex = 0.55,
+  main = paste(
+    "Normal QQ-plot of daily returns:",
+    strongeststock
+  ),
+  xlab = "Theoretical normal quantiles",
+  ylab = "Observed return quantiles"
+)
+
+qqline(
+  strongestreturns,
+  lwd = 2
+)
+
+weeklyreturns <- apply.weekly(
+  dailyreturns,
+  colSums
+)
+
+monthlyreturns <- apply.monthly(
+  dailyreturns,
+  colSums
+)
+
+quarterlyreturns <- apply.quarterly(
+  dailyreturns,
+  colSums
+)
+
+weeklyreturns <- na.omit(weeklyreturns)
+monthlyreturns <- na.omit(monthlyreturns)
+quarterlyreturns <- na.omit(quarterlyreturns)
+
+returnsbyhorizon <- list(
+  Daily = dailyreturns,
+  Weekly = weeklyreturns,
+  Monthly = monthlyreturns,
+  Quarterly = quarterlyreturns
+)
+
+cat("\n")
+cat("============================================\n")
+cat("NUMBER OF OBSERVATIONS AT EACH HORIZON\n")
+cat("============================================\n")
+
+print(
+  sapply(
+    returnsbyhorizon,
+    nrow
+  )
+)
+
+mardiaresults <- lapply(
+  returnsbyhorizon,
+  mardiatest
+)
+
+mardiatable <- do.call(
+  rbind,
+  lapply(
+    names(mardiaresults),
+    function(horizon) {
+      result <- mardiaresults[[horizon]]
+      result$Horizon <- horizon
+
+      result <- result[
+        ,
+        c(
+          "Horizon",
+          "N",
+          "Variables",
+          "Mardiaskewness",
+          "Skewnessstatistic",
+          "Skewnessdf",
+          "Skewnesspvalue",
+          "Mardiakurtosis",
+          "Expectedkurtosis",
+          "Kurtosisz",
+          "Kurtosispvalue"
+        )
+      ]
+
+      return(result)
+    }
+  )
+)
+
+rownames(mardiatable) <- NULL
+
+cat("\n")
+cat("============================================\n")
+cat("MARDIA TESTS AT ALL HORIZONS\n")
+cat("============================================\n")
+
+print(
+  mardiatable,
+  digits = 6
+)
+
+jbresults <- lapply(
+  returnsbyhorizon,
+  jballstocks
+)
+
+for (horizon in names(jbresults)) {
+  result <- jbresults[[horizon]]
+
+  result <- result[
+    order(
+      result$JB,
+      decreasing = TRUE
+    ),
+  ]
+
+  rownames(result) <- NULL
+  jbresults[[horizon]] <- result
+
+  cat("\n")
+  cat("============================================\n")
+  cat(
+    toupper(horizon),
+    "JARQUE-BERA TESTS\n"
+  )
+  cat("============================================\n")
+
+  print(
+    result,
+    digits = 6
+  )
+}
+
+alljbresults <- do.call(
+  rbind,
+  lapply(
+    names(jbresults),
+    function(horizon) {
+      result <- jbresults[[horizon]]
+      result$Horizon <- horizon
+
+      result <- result[
+        ,
+        c(
+          "Horizon",
+          "Stock",
+          "N",
+          "JB",
+          "pvalue",
+          "Skewness",
+          "Kurtosis",
+          "Excesskurtosis",
+          "Skewcontribution",
+          "Tailcontribution",
+          "Decision"
+        )
+      ]
+
+      return(result)
+    }
+  )
+)
+
+rownames(alljbresults) <- NULL
+
+rejectionsummary <- data.frame(
+  Horizon = names(jbresults),
+
+  Observations = sapply(
+    returnsbyhorizon,
+    nrow
+  ),
+
+  Numberrejected = sapply(
+    jbresults,
+    function(result) {
+      sum(
+        result$pvalue < 0.05
+      )
+    }
+  ),
+
+  Proportionrejected = sapply(
+    jbresults,
+    function(result) {
+      mean(
+        result$pvalue < 0.05
+      )
+    }
+  )
+)
+
+rownames(rejectionsummary) <- NULL
+
+cat("\n")
+cat("============================================\n")
+cat("PROPORTION OF MARGINS REJECTING NORMALITY\n")
+cat("============================================\n")
+
+print(
+  rejectionsummary,
+  digits = 4
+)
+
+nearzerorows <- which(
+  rejectionsummary$Proportionrejected <= 0.10
+)
+
+if (length(nearzerorows) > 0) {
+  nearzerohorizon <-
+    rejectionsummary$Horizon[
+      nearzerorows[1]
+    ]
+
+  cat(
+    "\nThe rejection proportion first falls",
+    "to near zero at the",
+    nearzerohorizon,
+    "horizon.\n"
+  )
+} else {
+  cat(
+    "\nThe rejection proportion does not",
+    "fall to near zero at any examined horizon.\n"
+  )
+}
+
+barplot(
+  rejectionsummary$Proportionrejected,
+  names.arg = rejectionsummary$Horizon,
+  ylim = c(0, 1),
+  main = "Proportion of stocks rejecting normality",
+  xlab = "Return horizon",
+  ylab = "Proportion with JB p-value < 0.05"
+)
+
+abline(
+  h = 0.05,
+  lty = 2
+)
+
+write.csv(
+  dailyjb,
+  "daily_jarque_bera_results.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  alljbresults,
+  "jarque_bera_all_horizons.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  mardiatable,
+  "mardia_all_horizons.csv",
+  row.names = FALSE
+)
+
+write.csv(
+  rejectionsummary,
+  "rejection_proportions.csv",
+  row.names = FALSE
+)
+
+cat("\n")
+cat("============================================\n")
+cat("WHY NORMALITY IMPROVES WITH AGGREGATION\n")
+cat("============================================\n")
+
+cat(
+  paste(
+    "A weekly, monthly or quarterly log-return is the sum",
+    "of daily log-returns.",
+    "According to the Central Limit Theorem, sums of many",
+    "weakly dependent random variables tend to become",
+    "closer to a normal distribution.",
+    "Therefore, skewness and excess kurtosis usually decrease",
+    "as the aggregation horizon increases.",
+    "However, the number of observations also decreases,",
+    "so the Jarque-Bera test has lower power at longer horizons.",
+    sep = "\n"
+  )
+)
