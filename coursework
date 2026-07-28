@@ -1,0 +1,348 @@
+# install.packages(c("quantmod", "moments", "tseries", "MASS", "copula"))
+library(quantmod)
+library(moments)
+library(tseries)
+library(MASS)
+library(copula)
+set.seed(202607)
+
+# 1. Data
+tickers <- c("AAPL", "MSFT", "JPM", "BAC", "XOM",
+             "CVX", "WMT", "KO", "DIS", "BA")
+sectors <- c("Technology", "Technology", "Financials", "Financials",
+             "Energy", "Energy", "Consumer", "Consumer",
+             "Consumer", "Industrials")
+getSymbols(tickers, src = "yahoo",
+           from = "2018-01-01", to = "2022-01-01")
+# Data used in the report were downloaded on 22 July 2026.
+download.date <- as.Date("2026-07-22")
+print(download.date)
+prices0 <- Ad(get(tickers[1]))
+for(i in 2:length(tickers)) {
+  prices0 <- merge(prices0, Ad(get(tickers[i])), all = TRUE)
+}
+colnames(prices0) <- tickers
+# Keeping adjusted prices on common trading days.
+cleaning <- c(rows_downloaded = nrow(prices0),
+              rows_with_NA = sum(!complete.cases(prices0)),
+              duplicate_dates = anyDuplicated(index(prices0)))
+prices <- na.omit(prices0)
+logprices <- log(prices)
+returns <- na.omit(diff(logprices))
+train <- returns["/2020-12-31"]
+test <- returns["2021"]
+X <- as.matrix(train)
+print(cleaning)
+print(c(first = as.character(first(index(prices))),
+        last = as.character(last(index(prices))),
+        rows = nrow(prices)))
+# Jarque-Bera test for each column
+JBTest <- function(dataMatrix)
+{
+  pvals <- rep(NA, ncol(dataMatrix))
+  for(i in 1:ncol(dataMatrix))
+  {
+    pvals[i] <- tseries::jarque.bera.test(dataMatrix[, i])$p.value
+  }
+  return(pvals)
+}
+# Summary statistics.
+stats <- data.frame(stock = tickers,
+                    sector = sectors,
+                    mean = rep(NA, length(tickers)),
+                    sd = rep(NA, length(tickers)),
+                    skewness = rep(NA, length(tickers)),
+                    kurtosis = rep(NA, length(tickers)),
+                    JB.p = JBTest(X))
+for(i in 1:length(tickers)) {
+  stats$mean[i] <- mean(X[, i])
+  stats$sd[i] <- sd(X[, i])
+  stats$skewness[i] <- moments::skewness(X[, i])
+  stats$kurtosis[i] <- moments::kurtosis(X[, i])
+}
+rownames(stats) <- tickers
+# Largest absolute return for each stock.
+largest <- data.frame(stock = tickers,
+                      date = as.Date(rep(NA, length(tickers))),
+                      return = rep(NA, length(tickers)))
+for(i in 1:length(tickers)) {
+  j <- which.max(abs(X[, i]))
+  largest$date[i] <- index(train)[j]
+  largest$return[i] <- X[j, i]
+}
+print(round(stats[, 3:7], 4))
+print(largest)
+print(round(cor(X), 2))
+
+# 2. Price, return, QQ and scatter plots.
+dir.create("figures", showWarnings = FALSE)
+cols <- c("#1b4f72", "#2e86c1", "#7d3c98", "#c0392b", "#117864",
+          "#52be80", "#d4ac0d", "#e67e22", "#7f8c8d", "#17202a")
+p.train <- prices["/2020-12-31"]
+rebased <- sweep(coredata(p.train), 2,
+                 as.numeric(p.train[1, ]), "/") * 100
+par(mfrow = c(2, 1), mar = c(3, 4, 2, 1))
+matplot(index(p.train), rebased, type = "l", lty = 1, col = cols,
+        xlab = "", ylab = "January 2018 = 100",
+        main = "Adjusted prices")
+abline(v = as.Date("2020-03-11"), lty = 2)
+legend("topleft", tickers, col = cols, lty = 1,
+       cex = 0.55, ncol = 5)
+matplot(index(train), X, type = "l", lty = 1, col = cols,
+        xlab = "", ylab = "log-return",
+        main = "Daily log-returns")
+abline(v = as.Date("2020-03-11"), lty = 2)
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 1))
+for(i in c(6, 10)) {
+  qqnorm(scale(X[, i]),
+         main = paste(tickers[i], "normal QQ-plot"),
+         pch = 16, cex = 0.45)
+  qqline(scale(X[, i]), col = "red", lwd = 2)
+}
+pairs.to.plot <- matrix(c("AAPL", "MSFT",
+                          "JPM", "BAC",
+                          "XOM", "CVX",
+                          "MSFT", "XOM"),
+                        ncol = 2, byrow = TRUE)
+par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+for(i in 1:nrow(pairs.to.plot)) {
+  s1 <- pairs.to.plot[i, 1]
+  s2 <- pairs.to.plot[i, 2]
+  plot(X[, s1], X[, s2], pch = 16, cex = 0.45,
+       col = rgb(0, 0, 0, 0.22),
+       xlab = s1, ylab = s2,
+       main = paste(s1, "vs", s2))
+  abline(lm(X[, s2] ~ X[, s1]), col = "red")
+}
+
+# 3. Fixed buy-and-hold portfolio
+# Invest $1,000 in each adjusted-price series at the first date.
+# The fixed units therefore give a total-return-equivalent portfolio.
+shares <- 1000 / as.numeric(prices[1, ])
+portfolio.value <- as.numeric(coredata(prices) %*% shares)
+portfolio.value <- xts(portfolio.value, order.by = index(prices))
+portfolio.return <- na.omit(diff(log(portfolio.value)))
+loss <- na.omit(-diff(portfolio.value))
+loss.train <- as.numeric(loss["/2020-12-31"])
+loss.test <- as.numeric(loss["2021"])
+# Compare the pre-pandemic, shock and recovery periods.
+regime.names <- c("2018-2019", "Mar-Apr 2020", "May-Dec 2020")
+regime.ranges <- c("2018-01-01/2019-12-31",
+                   "2020-03-01/2020-04-30",
+                   "2020-05-01/2020-12-31")
+regime.table <- matrix(NA, nrow = 5, ncol = length(regime.ranges))
+for(i in 1:length(regime.ranges)) {
+  R <- returns[regime.ranges[i]]
+  Rp <- as.numeric(portfolio.return[regime.ranges[i]])
+  C <- cor(R)
+  regime.table[, i] <- c(nrow(R),
+                          mean(apply(R, 2, sd)) * 100,
+                          mean(C[lower.tri(C)]),
+                          sd(Rp) * 100,
+                          -min(Rp) * 100)
+}
+rownames(regime.table) <- c("Return observations (n)",
+                            "Mean stock volatility (%)",
+                            "Mean pairwise correlation",
+                            "Portfolio return volatility (%)",
+                            "Worst portfolio log-return (%)")
+colnames(regime.table) <- regime.names
+print(round(regime.table, 2))
+# Fit a Student-t distribution by maximum likelihood.
+t.fit <- fitdistr(loss.train, "t",
+                  start = list(m = mean(loss.train),
+                               s = sd(loss.train), df = 5),
+                  lower = c(-Inf, 0.001, 2.01))
+t.par <- t.fit$estimate
+# Historical, normal and Student-t VaR and ES.
+risk <- function(alpha)
+{
+  VaR.h <- as.numeric(quantile(loss.train, alpha))
+  ES.h <- mean(loss.train[loss.train >= VaR.h])
+  VaR.n <- mean(loss.train) + sd(loss.train) * qnorm(alpha)
+  ES.n <- mean(loss.train) + sd(loss.train) *
+    dnorm(qnorm(alpha)) / (1 - alpha)
+  q <- qt(alpha, t.par["df"])
+  VaR.t <- t.par["m"] + t.par["s"] * q
+  ES.t <- t.par["m"] + t.par["s"] * dt(q, t.par["df"]) /
+    (1 - alpha) * (t.par["df"] + q^2) / (t.par["df"] - 1)
+  result <- c(Historical.VaR = VaR.h,
+              Historical.ES = ES.h,
+              Normal.VaR = VaR.n,
+              Normal.ES = ES.n,
+              Student.t.VaR = VaR.t,
+              Student.t.ES = ES.t)
+  return(result)
+}
+levels <- c(0.95, 0.99)
+risk.table <- matrix(NA, nrow = length(levels), ncol = 6)
+for(i in 1:length(levels)) {
+  risk.table[i, ] <- risk(levels[i])
+}
+colnames(risk.table) <- c("Historical.VaR", "Historical.ES",
+                          "Normal.VaR", "Normal.ES",
+                          "Student.t.VaR", "Student.t.ES")
+rownames(risk.table) <- paste0(100 * levels, "%")
+print(round(risk.table, 1))
+print(t.par)
+# Kupiec proportion-of-failure test.
+kupiec <- function(realised.loss, VaR, alpha)
+{
+  n <- length(realised.loss)
+  hits <- sum(realised.loss >= VaR)
+  phat <- hits / n
+  LR <- 2 * (dbinom(hits, n, phat, log = TRUE) -
+             dbinom(hits, n, 1 - alpha, log = TRUE))
+  result <- c(exceptions = hits,
+              rate = phat,
+              LR = LR,
+              p.value = 1 - pchisq(LR, 1))
+  return(result)
+}
+model.names <- c("Historical", "Normal", "Student-t")
+VaR.names <- c("Historical.VaR", "Normal.VaR", "Student.t.VaR")
+backtest <- data.frame(alpha = rep(levels, each = 3),
+                       model = rep(model.names, times = 2),
+                       exceptions = rep(NA, 6),
+                       rate = rep(NA, 6),
+                       LR = rep(NA, 6),
+                       p.value = rep(NA, 6))
+k <- 1
+for(i in 1:length(levels)) {
+  for(j in 1:length(model.names)) {
+    result <- kupiec(loss.test,
+                     risk.table[i, VaR.names[j]],
+                     levels[i])
+    backtest[k, 3:6] <- result
+    k <- k + 1
+  }
+}
+backtest.print <- backtest
+backtest.print[, c(1, 3, 4, 5, 6)] <-
+  round(backtest.print[, c(1, 3, 4, 5, 6)], 4)
+print(backtest.print)
+# Exact-binomial sensitivity check for historical 99% VaR.
+hist.hits.99 <- backtest$exceptions[
+  backtest$alpha == 0.99 & backtest$model == "Historical"]
+exact.99 <- binom.test(hist.hits.99, length(loss.test), p = 0.01,
+                       alternative = "two.sided")
+print(c(expected.exceptions = 0.01 * length(loss.test),
+        exact.binomial.p = exact.99$p.value,
+        probability.zero = dbinom(0, length(loss.test), 0.01)))
+par(mfrow = c(1, 2), mar = c(4, 4, 2, 2))
+hist(loss.train, breaks = 55, prob = TRUE,
+     col = "grey90", border = "white",
+     main = "Training loss distribution",
+     xlab = "daily loss ($)")
+curve(dnorm(x, mean(loss.train), sd(loss.train)),
+      add = TRUE, lwd = 2)
+curve(dt((x - t.par["m"]) / t.par["s"], t.par["df"]) /
+        t.par["s"], add = TRUE, col = "red", lwd = 2)
+legend("topright", c("normal", "Student-t"),
+       col = c("black", "red"), lty = 1, lwd = 2,
+       cex = 0.7, bty = "n")
+backtest.dates <- index(loss["2021"])
+plot(backtest.dates, loss.test, type = "h", xaxt = "n",
+     xlim = as.Date(c("2020-12-15", "2022-01-31")),
+     xlab = "", ylab = "loss ($)",
+     main = "2021 backtest: 99% VaR")
+axis.Date(1, at = as.Date(c("2021-01-01", "2021-07-01", "2022-01-01")),
+          format = "%b %Y")
+abline(h = risk.table["99%", VaR.names],
+       col = c("blue", "black", "red"),
+       lty = c(2, 3, 4), lwd = 1.5)
+legend("bottomleft", c("historical", "normal", "Student-t"),
+       col = c("blue", "black", "red"),
+       lty = c(2, 3, 4), cex = 0.65, bty = "n")
+
+# 4. Dependence and copulas
+# Form the pseudo-sample using ranks
+U <- matrix(NA, nrow = nrow(X), ncol = ncol(X))
+for(i in 1:ncol(X)) {
+  U[, i] <- rank(X[, i]) / (nrow(X) + 1)
+}
+colnames(U) <- tickers
+d <- ncol(U)
+# Gaussian copula.
+fit.g0 <- fitCopula(normalCopula(dim = d, dispstr = "un"), U,
+                    method = "itau", estimate.variance = FALSE)
+fit.g <- fitCopula(normalCopula(dim = d, dispstr = "un"), U,
+                   method = "mpl", start = coef(fit.g0),
+                   estimate.variance = FALSE)
+# Student-t, Clayton and Gumbel copulas.
+# For Student-t, itau.mpl estimates correlations from Kendall's tau
+# and then estimates the degrees of freedom by pseudo-likelihood.
+fit.t <- fitCopula(tCopula(dim = d, dispstr = "un", df.fixed = FALSE), U,
+                   method = "itau.mpl", estimate.variance = FALSE)
+fit.c <- fitCopula(claytonCopula(dim = d), U,
+                   method = "mpl", estimate.variance = FALSE)
+fit.gu <- fitCopula(gumbelCopula(dim = d), U,
+                    method = "mpl", estimate.variance = FALSE)
+fits <- list(Gaussian = fit.g,
+             Student.t = fit.t,
+             Clayton = fit.c,
+             Gumbel = fit.gu)
+# Compare log-likelihood, AIC and BIC.
+# For Student-t these are evaluated at the hybrid itau.mpl estimate.
+copula.table <- data.frame(model = names(fits),
+                           logLik = rep(NA, length(fits)),
+                           parameters = rep(NA, length(fits)),
+                           AIC = rep(NA, length(fits)),
+                           BIC = rep(NA, length(fits)))
+for(i in 1:length(fits)) {
+  copula.table$logLik[i] <- as.numeric(logLik(fits[[i]]))
+  copula.table$parameters[i] <- attr(logLik(fits[[i]]), "df")
+  copula.table$AIC[i] <- -2 * copula.table$logLik[i] +
+    2 * copula.table$parameters[i]
+  copula.table$BIC[i] <- -2 * copula.table$logLik[i] +
+    log(nrow(U)) * copula.table$parameters[i]
+}
+rownames(copula.table) <- copula.table$model
+print(round(copula.table[, 2:5], 1))
+# Student-t copula lower and upper tail dependence are equal.
+nu <- as.numeric(tail(coef(fit.t), 1))
+P <- getSigma(fit.t@copula)
+lambda.matrix <- 2 * pt(-sqrt((nu + 1) * (1 - P) / (1 + P)),
+                        df = nu + 1)
+pair.index <- which(lower.tri(lambda.matrix), arr.ind = TRUE)
+lambda <- lambda.matrix[lower.tri(lambda.matrix)]
+print(c(df = nu,
+        min.lambda = min(lambda),
+        median.lambda = median(lambda),
+        max.lambda = max(lambda)))
+tail.pairs <- data.frame(
+  pair = paste(tickers[pair.index[, 2]],
+               tickers[pair.index[, 1]], sep = " - "),
+  lambda = lambda)
+extreme.pairs <- tail.pairs[
+  c(which.min(tail.pairs$lambda), which.max(tail.pairs$lambda)), ]
+rownames(extreme.pairs) <- c("minimum", "maximum")
+print(extreme.pairs)
+# Simulated end-2020 risk with identical empirical margins.
+n.sim <- 100000
+position.T <- shares * as.numeric(tail(p.train, 1))
+simulate.loss <- function(fitted.copula)
+{
+  U.sim <- rCopula(n.sim, fitted.copula@copula)
+  R.sim <- matrix(NA, nrow = n.sim, ncol = ncol(X))
+  for(i in 1:ncol(X)) {
+    R.sim[, i] <- quantile(X[, i], U.sim[, i],
+                           type = 1, names = FALSE)
+  }
+  L.sim <- -rowSums(sweep(exp(R.sim) - 1, 2, position.T, "*"))
+  return(L.sim)
+}
+sim.risk <- function(L)
+{
+  VaR <- as.numeric(quantile(L, 0.99, type = 1))
+  ES <- mean(L[L >= VaR])
+  return(c(VaR = VaR, ES = ES))
+}
+set.seed(202607)
+loss.g <- simulate.loss(fit.g)
+loss.t <- simulate.loss(fit.t)
+copula.risk <- rbind(Gaussian = sim.risk(loss.g),
+                     Student.t = sim.risk(loss.t))
+print(round(copula.risk, 1))
+# Record R and package versions used for the analysis.
+print(sessionInfo())
